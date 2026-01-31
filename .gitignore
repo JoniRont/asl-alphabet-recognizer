@@ -1,0 +1,29 @@
+# Pythonin välimuistitiedostot
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtuaaliympäristö (TÄRKEÄ)
+.venv/
+venv/
+ENV/
+
+# Data ja kuvat (TÄRKEÄ YAMK-PROJEKTISSA)
+# Emme yleensä halua tuhansia kuvia Git-historiaan
+data/
+*.jpg
+*.jpeg
+*.png
+
+# Neuroverkon mallitiedostot (suuria tiedostoja)
+*.keras
+*.h5
+*.csv
+best_model.keras
+
+# Käyttöjärjestelmän tiedostot
+.DS_Store
+Thumbs.db
+
+# VS Code asetukset (valinnainen)
+.vscode/

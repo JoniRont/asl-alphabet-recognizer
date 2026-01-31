@@ -1,0 +1,12 @@
+# Konenäkö ja käden tunnistus
+mediapipe
+opencv-python
+
+# Neuroverkot ja laskenta
+torch
+torchvision
+numpy
+
+# Datan käsittely
+pandas
+scikit-learn
