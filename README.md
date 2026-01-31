@@ -1,101 +1,71 @@
 🖐️ ASL Real-Time Recognition (MediaPipe & PyTorch)
 
 Tämä projekti toteuttaa amerikkalaisen viittomakielen (ASL) reaaliaikaisen tunnistuksen hyödyntäen MediaPipe Hands -teknologiaa ja PyTorch-neuroverkkoa.
+💡 Miksi koordinaatit?
 
-Perinteisen kuvapohjaisen tunnistuksen sijaan tämä malli muuntaa käden 21 nivelpistettä numeerisiksi koordinaateiksi. Tämä tekee sovelluksesta erittäin nopean, kevyen ja immuunin taustahäiriöille, kuten varjoille tai monimutkaisille huoneympäristöille.
-📋 Sisällysluettelo
+Mallimme muuntaa käden 21 nivelpistettä numeerisiksi koordinaateiksi perinteisen kuvapohjaisen tunnistuksen sijaan.
 
-    Vaatimukset
+    Nopeus: Kevyt ja viiveetön myös perusprosessorilla (CPU).
 
-    Asennus
-
-    Projektin rakenne
-
-    Käyttöohjeet
-
-        Vaihe 1: Datan esikäsittely
-
-        Vaihe 2: Mallin opetus
-
-        Vaihe 3: Live-tunnistus
-
-    Miten se toimii?
-
-💻 Vaatimukset
-
-    Python 3.8 tai uudempi
-
-    Web-kamera
-
-    (Valinnainen) NVIDIA GPU ja CUDA, jos haluat nopeuttaa opetusta (vaikka tämä malli on kevyt myös CPU:lla).
-
-🛠 Asennus
-
-    Lataa projekti ja siirry projektikansioon.
-
-    Luo virtuaaliympäristö (suositus):
-    Bash
-
-    python -m venv venv
-    source venv/bin/activate  # Mac/Linux
-    .\venv\Scripts\activate   # Windows
-
-    Asenna tarvittavat kirjastot:
-    Bash
-
-    pip install -r requirements.txt
+    Varmuus: Immuuni taustahäiriöille ja valaistusmuutoksille.
 
 📁 Projektin rakenne
-Plaintext
 
-├── data_1/                  # Alkuperäiset opetuskuvat (A-Z, del, jne.)
-├── step1_create_csv.py      # Muuntaa kuvat koordinaateiksi (CSV)
-├── step2_train_csv.py       # Opettaa neuroverkon CSV-datalla
-├── step3_webcam.py          # Reaaliaikainen tunnistusohjelma
-├── hand_data.csv            # Generoitu koordinaattidata (luodaan vaiheessa 1)
-├── mediapipe_asl.pth        # Opetettu mallitiedosto (luodaan vaiheessa 2)
-├── requirements.txt         # Kirjastoluettelo
-└── README.md                # Tämä ohjetiedosto
+    step1_create_csv.py: Muuntaa kuvat 63 koordinaatin (21x,y,z) CSV-dataksi.
+
+    step2_train_csv.py: Opettaa MLP-neuroverkon ja tallentaa sen (.pth).
+
+    step3_webcam.py: Live-tunnistus web-kameralla.
+
+✨ Erikoisominaisuudet
+
+    Dynaamiset kirjaimet (J & Z): Tunnistaa liikkeen. Piirrä kuvio ilmassa tai pidä kättä paikallaan 2s valinnan lukitsemiseksi.
+
+    Turva-alueet (Deadzone): Tunnistus pysähtyy, kun käsi on del tai space -painikkeiden päällä.
+
+    Vakaussuodatin: Kirjain lisätään vasta, kun asento pysyy vakaana 1.2s.
 
 🚀 Käyttöohjeet
-Vaihe 1: Datan esikäsittely (step1_create_csv.py)
+1. Lataa opetusdata
 
-Tämä skripti lukee data_1-kansion kuvat ja käyttää MediaPipea etsimään käden nivelpisteet.
+Lataa kuvadata tästä osoitteesta:
 
-    Toiminto: Luo hand_data.csv -tiedoston, joka sisältää 63 koordinaattia (21 nivelta¨×x,y,z) per kuva.
+🔗 Kaggle: ASL American Sign Language Alphabet Dataset
 
-    Ajo: python step1_create_csv.py
+    [!IMPORTANT] Tärkeää: Varmista, että koodin CLASS_NAMES -listan järjestys on täsmälleen sama kuin lataamasi datan kansiojärjestys levyllä.
 
-Vaihe 2: Mallin opetus (step2_train_csv.py)
+2. Suoritusjärjestys
 
-Opetetaan kevyt Multi-Layer Perceptron (MLP) -neuroverkko tunnistamaan kirjaimet koordinaattien perusteella.
+    python step1_create_csv.py (Datan esikäsittely)
 
-    Toiminto: Lukee CSV-tiedoston ja tallentaa opitun mallin nimellä mediapipe_asl.pth.
+    python step2_train_csv.py (Mallin opetus)
 
-    Ajo: python step2_train_csv.py
+    python step3_webcam.py (Live-tunnistus)
 
-Vaihe 3: Live-tunnistus (step3_webcam.py)
+🖐️ ASL Real-Time Recognition (English)
 
-Käynnistää webkameran ja suorittaa tunnistuksen livenä.
+Real-time American Sign Language (ASL) recognition using MediaPipe Hands and a PyTorch neural network.
+💡 Why Landmarks?
 
-    Toiminto: Piirtää käden päälle "luurangon" ja näyttää ennustetun kirjaimen sekä varmuusprosentin.
+Instead of raw pixels, we process 21 hand joints as numerical coordinates.
 
-    Ajo: python step3_webcam.py
+    Efficiency: Extremely fast; runs smoothly on CPU.
 
-    Lopetus: Paina näppäimistöstä 'q'.
+    Robustness: Immune to background noise and lighting conditions.
 
-🧠 Miten se toimii?
+🚀 Getting Started
+1. Download Dataset
 
-Järjestelmä on jaettu kolmeen älykkääseen kerrokseen:
+Download the training images from:
 
-    MediaPipe Hands: Google MediaPipe tunnistaa käden kuvasta ja erottaa siitä 21 avainpistettä. Tämä poistaa tarpeen analysoida taustaa tai värejä.
+🔗 Kaggle: ASL American Sign Language Alphabet Dataset
 
-    Normalisointi: Koordinaatit käsitellään niin, että käden etäisyys kamerasta tai sijainti ruudulla ei vaikuta lopputulokseen.
+    [!IMPORTANT] Crucial: Ensure that the CLASS_NAMES list in the scripts matches the exact order of the folders in your local dataset directory.
 
-    PyTorch Classifier: Syväoppiva malli saa syötteeksi nivelten asennot ja luokittelee ne oikeaksi ASL-merkiksi.
+2. Execution Steps
 
-⚠️ Huomioitavaa
+    python step1_create_csv.py (Preprocessing)
 
-    Varmista, että CLASS_NAMES -lista on identtinen kaikissa kolmessa skriptissä.
+    python step2_train_csv.py (Training)
 
-    Jos malli ei tunnista kättäsi, varmista hyvä valaistus, jotta MediaPipe löytää nivelpisteet oikein.
+    python step3_webcam.py (Live Detection)
