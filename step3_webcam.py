@@ -6,7 +6,6 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from collections import deque
 import time
-import numpy as np
 import math
 
 # Compatibility import for Image Processing Options
@@ -14,13 +13,6 @@ try:
     from mediapipe.tasks.python.vision import ImageProcessingOptions
 except ImportError:
     from mediapipe.tasks.python.components.containers import ImageProcessingOptions
-
-# Define hand skeleton connections
-HAND_CONNECTIONS = [
-    (0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
-    (5, 9), (9, 10), (10, 11), (11, 12), (9, 13), (13, 14), (14, 15), (15, 16),
-    (13, 17), (17, 18), (18, 19), (19, 20), (0, 17)
-]
 
 # 1. MODEL ARCHITECTURE
 class LandmarkNet(nn.Module):
@@ -36,7 +28,7 @@ class LandmarkNet(nn.Module):
 CLASS_NAMES = ['A', 'B', 'C', 'D', 'del', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
                'N', 'nothing', 'O', 'P', 'Q', 'R', 'S', 'space', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
 
-# 2. LOAD MODEL AND DETECTOR
+# 2. INITIALIZATION
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 checkpoint = torch.load("mediapipe_asl_v1.pth", map_location=device, weights_only=False)
 model = LandmarkNet(len(CLASS_NAMES)).to(device)
@@ -63,19 +55,14 @@ btn_space = {"rect": (0.02, 0.20, 0.18, 0.33), "start_time": None}
 motion_buffer = deque(maxlen=40)
 prediction_buffer = deque(maxlen=40)
 is_drawing_mode = False
+drawing_type = None 
 last_movement_time = 0
-success_cooldown_until = 0  # Cooldown timer for all inputs
+success_cooldown_until = 0 
 
-# Helper to check if finger is pointing up
-def check_vertical_alignment(landmarks):
-    pinky_base, pinky_tip = landmarks[17], landmarks[20]
-    x_diff = abs(pinky_tip.x - pinky_base.x)
-    y_diff = pinky_base.y - pinky_tip.y 
-    return y_diff > 0.05 and x_diff < (y_diff * 0.4)
-
-# Helper to check palm orientation
-def get_palm_direction(landmarks):
-    return landmarks[17].x > landmarks[2].x
+# Helper to check if a finger is extended
+def is_finger_extended(landmarks, tip_idx):
+    # Tip (e.g. 8) should be higher than PIP joint (e.g. 6)
+    return landmarks[tip_idx].y < landmarks[tip_idx - 2].y
 
 # 3. MAIN LOOP
 cap = cv2.VideoCapture(0)
@@ -99,44 +86,33 @@ while cap.isOpened():
 
     if result.hand_landmarks:
         for landmarks in result.hand_landmarks:
-            # Draw Hand Skeleton
-            for connection in HAND_CONNECTIONS:
-                p1, p2 = landmarks[connection[0]], landmarks[connection[1]]
-                cv2.line(frame, (int(p1.x*w), int(p1.y*h)), (int(p2.x*w), int(p2.y*h)), (200, 200, 200), 1)
-            for lm in landmarks:
-                cv2.circle(frame, (int(lm.x*w), int(lm.y*h)), 3, (0, 255, 0), -1)
-
             wrist = landmarks[0]
             index_tip = (landmarks[8].x, landmarks[8].y)
             pinky_tip = (landmarks[20].x, landmarks[20].y)
             
-            is_vertical = check_vertical_alignment(landmarks)
-            is_palm_to_camera = get_palm_direction(landmarks)
+            index_extended = is_finger_extended(landmarks, 8)
+            pinky_extended = is_finger_extended(landmarks, 20)
 
             # --- BUTTON COLLISION LOGIC ---
             on_any_button = False
             for btn, action in [(btn_del, "del"), (btn_space, "space")]:
                 x1, y1, x2, y2 = btn["rect"]
-                
                 if x1 < index_tip[0] < x2 and y1 < index_tip[1] < y2:
                     on_any_button = True
                     if btn["start_time"] is None:
                         btn["start_time"] = current_time
                     elif current_time - btn["start_time"] > 0.1:
-                        if action == "del": captured_text = captured_text[:-1]
-                        else: captured_text += " "
-                        btn["start_time"] = current_time + 1000 # Lock button
-                        success_cooldown_until = current_time + 1.2 # ADDED: Wait after button press
+                        captured_text = captured_text[:-1] if action == "del" else captured_text + " "
+                        btn["start_time"] = current_time + 1000 # Lock
+                        success_cooldown_until = current_time + 1.2
                 else:
-                    # If finger was just on the button but moved away
                     if btn["start_time"] is not None:
-                        success_cooldown_until = current_time + 0.5 # ADDED: Short delay when leaving button
+                        success_cooldown_until = current_time + 0.5
                         btn["start_time"] = None
 
-            # --- PREDICTION AND NORMALIZATION ---
+            # --- PREDICTION ---
             lm_list = []
             for lm in landmarks: lm_list.extend([lm.x - wrist.x, lm.y - wrist.y, lm.z - wrist.z])
-            
             input_tensor = torch.FloatTensor(lm_list).to(device).unsqueeze(0)
             with torch.no_grad():
                 output = model(input_tensor)
@@ -145,71 +121,72 @@ while cap.isOpened():
                 confidence = conf.item()
 
             display_color = (0, 255, 0)
-            status_msg = f"{label}" if on_any_button else f"{label} {confidence*100:.0f}%"
+            status_msg = f"{label} {confidence*100:.0f}%"
 
-            # --- MOTION ANALYSIS (J / I) ---
+            # --- MOTION ANALYSIS ---
             if is_drawing_mode:
-                motion_buffer.append(pinky_tip)
+                active_point = index_tip if drawing_type == "Z" else pinky_tip
+                motion_buffer.append(active_point)
                 prediction_buffer.append(label)
                 
-                dist_from_prev = math.sqrt((pinky_tip[0] - motion_buffer[-2][0])**2 + (pinky_tip[1] - motion_buffer[-2][1])**2) if len(motion_buffer) > 1 else 0
+                dist_from_prev = math.sqrt((active_point[0] - motion_buffer[-2][0])**2 + (active_point[1] - motion_buffer[-2][1])**2) if len(motion_buffer) > 1 else 0
                 if dist_from_prev > 0.005: last_movement_time = current_time
 
                 if (current_time - last_movement_time) > 0.5 or len(motion_buffer) == motion_buffer.maxlen:
-                    start_p = motion_buffer[0]
-                    max_dist = 0
-                    for p in motion_buffer:
-                        d = math.sqrt((p[0] - start_p[0])**2 + (p[1] - start_p[1])**2)
-                        if d > max_dist: max_dist = d
-
-                    if max_dist > 0.08 and "J" in prediction_buffer:
-                        captured_text += "j"
-                        success_cooldown_until = current_time + 1.2 # ADDED: Standardized delay
-                    elif max_dist < 0.04 and label == "I" and is_vertical:
-                        captured_text += "i"
-                        success_cooldown_until = current_time + 1.0 # ADDED: Standardized delay
+                    xs, ys = [p[0] for p in motion_buffer], [p[1] for p in motion_buffer]
+                    width, height = max(xs) - min(xs), max(ys) - min(ys)
+                    
+                    if drawing_type == "Z":
+                        if width > 0.06 and height > 0.06 and "Z" in prediction_buffer:
+                            captured_text += "z"
+                    else:
+                        start_p = motion_buffer[0]
+                        max_dist = max([math.sqrt((p[0]-start_p[0])**2 + (p[1]-start_p[1])**2) for p in motion_buffer])
+                        if max_dist > 0.08 and "J" in prediction_buffer: captured_text += "j"
+                        elif max_dist < 0.04 and label == "I": captured_text += "i"
                     
                     is_drawing_mode = False
+                    success_cooldown_until = current_time + 1.2
                     motion_buffer.clear()
                     prediction_buffer.clear()
 
                 for i in range(1, len(motion_buffer)):
                     cv2.line(frame, (int(motion_buffer[i-1][0]*w), int(motion_buffer[i-1][1]*h)),
                              (int(motion_buffer[i][0]*w), int(motion_buffer[i][1]*h)), (0, 0, 255), 3)
-                status_msg = "ANALYZING MOTION..."
+                status_msg = f"DRAWING {drawing_type}..."
                 display_color = (0, 0, 255)
 
             elif current_time > success_cooldown_until:
-                # Normal letter detection with stability threshold
-                if label == 'I' and confidence > 0.80 and is_palm_to_camera and is_vertical and not on_any_button:
-                    is_drawing_mode = True
+                # Trigger Z-mode: Index extended
+                if label == 'Z' and confidence > 0.85 and index_extended and not on_any_button:
+                    is_drawing_mode, drawing_type = True, "Z"
                     last_movement_time = current_time
                     motion_buffer.clear()
-                    prediction_buffer.clear()
-                    motion_buffer.append(pinky_tip)
-                    prediction_buffer.append(label)
-                
-                elif label not in ["nothing", "del", "space", "I", "J"] and confidence > 0.85 and not on_any_button:
+                # Trigger I/J-mode: Pinky extended AND Index NOT extended
+                elif label == 'I' and confidence > 0.80 and pinky_extended and not index_extended and not on_any_button:
+                    is_drawing_mode, drawing_type = True, "I/J"
+                    last_movement_time = current_time
+                    motion_buffer.clear()
+                # Static letters
+                elif label not in ["nothing", "del", "space", "I", "J", "Z"] and confidence > 0.85 and not on_any_button:
                     if label == last_stable_label:
                         if (current_time - label_stable_start_time) > STABLE_THRESHOLD:
                             captured_text += label
                             last_stable_label = ""
-                            success_cooldown_until = current_time + 1.2 # ADDED: Wait after letter
+                            success_cooldown_until = current_time + 1.2
                     else:
-                        last_stable_label = label
-                        label_stable_start_time = current_time
+                        last_stable_label = label; label_stable_start_time = current_time
             else:
-                status_msg = "WAITING..." # Visual feedback during cooldown
+                status_msg = "WAITING..."
                 display_color = (255, 255, 0)
 
-            cv2.putText(frame, status_msg, (int(wrist.x*w), int(wrist.y*h)-30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, display_color, 2)
+            cv2.putText(frame, status_msg, (int(wrist.x*w), int(wrist.y*h)-30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, display_color, 2)
 
-    # FINAL TEXT OUTPUT
+    # OUTPUT
     cv2.rectangle(frame, (0, h-60), (w, h), (0, 0, 0), -1)
     cv2.putText(frame, f"TEXT: {captured_text}", (20, h-20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-    cv2.imshow("ASL Motion Analyzer", frame)
+    cv2.imshow("ASL Analyzer", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'): break
 
 cap.release()
