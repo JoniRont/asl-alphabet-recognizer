@@ -97,6 +97,7 @@ while cap.isOpened():
         cv2.putText(frame, label_name, (int(x1*w)+5, int(y2*h)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
     if result.hand_landmarks:
+        print("Hand detected")
         for landmarks in result.hand_landmarks:
             # Piirretään skeleton
             for connection in HAND_CONNECTIONS:
@@ -109,8 +110,29 @@ while cap.isOpened():
             index_tip = (landmarks[8].x, landmarks[8].y)
             pinky_tip = (landmarks[20].x, landmarks[20].y)
             
+            
             is_vertical = check_vertical_alignment(landmarks)
             is_palm_to_camera = get_palm_direction(landmarks)
+
+            # --- BUTTON COLLISION LOGIC ---
+            on_any_button = False
+            for btn, action in [(btn_del, "del"), (btn_space, "space")]:
+                x1, y1, x2, y2 = btn["rect"]
+                
+                # Check if index finger tip is inside the button
+                if x1 < index_tip[0] < x2 and y1 < index_tip[1] < y2:
+                    on_any_button = True
+                    if btn["start_time"] is None:
+                        btn["start_time"] = current_time
+                    elif current_time - btn["start_time"] > 0.1:
+                        if action == "del":
+                            captured_text = captured_text[:-1]
+                        else:
+                            captured_text += " "
+                        btn["start_time"] = current_time + 1000  # Prevent re-triggering
+                else:
+                    # Reset if finger leaves the area
+                    btn["start_time"] = None
 
             # ENNUSTUS
             lm_list = []
@@ -123,7 +145,7 @@ while cap.isOpened():
                 confidence = conf.item()
 
             display_color = (0, 255, 0)
-            status_msg = f"{label} {confidence*100:.0f}%"
+            status_msg = f"{label}" if on_any_button else f"{label} {confidence*100:.0f}%"
 
             if is_drawing_mode:
                 motion_buffer.append(pinky_tip)
@@ -170,7 +192,7 @@ while cap.isOpened():
 
             elif current_time > success_cooldown_until:
                 # Aloitetaan seuranta heti kun nähdään pysty-I
-                if label == 'I' and confidence > 0.80 and is_palm_to_camera and is_vertical:
+                if label == 'I' and confidence > 0.80 and is_palm_to_camera and is_vertical and not on_any_button:
                     is_drawing_mode = True
                     last_movement_time = current_time
                     motion_buffer.clear()
@@ -179,7 +201,7 @@ while cap.isOpened():
                     prediction_buffer.append(label)
                 
                 # Muut kirjaimet (vakaustunnistus)
-                elif label not in ["nothing", "del", "space", "I", "J"] and confidence > 0.85:
+                elif label not in ["nothing", "del", "space", "I", "J"] and confidence > 0.85 and not on_any_button:
                     if label == last_stable_label:
                         if (current_time - label_stable_start_time) > STABLE_THRESHOLD:
                             captured_text += label
