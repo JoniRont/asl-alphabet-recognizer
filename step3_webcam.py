@@ -14,7 +14,6 @@ try:
 except ImportError:
     from mediapipe.tasks.python.components.containers import ImageProcessingOptions
 
-# Käden luuranko visualisointia varten
 HAND_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
     (5, 9), (9, 10), (10, 11), (11, 12), (9, 13), (13, 14), (14, 15), (15, 16),
@@ -34,7 +33,8 @@ class LandmarkNet(nn.Module):
 CLASS_NAMES = ['A', 'B', 'C', 'D', 'del', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
                'N', 'nothing', 'O', 'P', 'Q', 'R', 'S', 'space', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
 
-# ALUSTUS
+IGNORE_RESET_LABELS = ["Z", "I", "J", "H", "D", "U", "V", "G", "Q", "P", "nothing"]
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 checkpoint = torch.load("mediapipe_asl_v1.pth", map_location=device, weights_only=False)
 model = LandmarkNet(len(CLASS_NAMES)).to(device)
@@ -49,7 +49,6 @@ detector = vision.HandLandmarker.create_from_options(
 )
 img_proc_opts = ImageProcessingOptions(region_of_interest=None, rotation_degrees=0)
 
-# MUUTTUJAT
 captured_text = ""
 last_stable_label = ""
 label_stable_start_time = 0
@@ -62,7 +61,9 @@ last_movement_time = 0
 success_cooldown_until = 0 
 debug_msg = ""
 
-# Painikkeiden määrittely (x1, y1, x2, y2) suhteellisina koordinaatteina
+cancel_label = ""
+cancel_start_time = 0
+
 btn_del = {"rect": (0.02, 0.05, 0.18, 0.18), "start_time": None}
 btn_space = {"rect": (0.02, 0.20, 0.18, 0.33), "start_time": None}
 
@@ -81,7 +82,6 @@ while cap.isOpened():
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     result = detector.detect(mp_image, img_proc_opts)
 
-    # UI Nappien piirto
     for btn, label_name, col in [(btn_del, "DEL", (0,0,255)), (btn_space, "SPACE", (255,0,0))]:
         x1, y1, x2, y2 = btn["rect"]
         color = (0, 255, 0) if btn["start_time"] else col
@@ -90,33 +90,27 @@ while cap.isOpened():
 
     if result.hand_landmarks:
         for landmarks in result.hand_landmarks:
-            # Sormien visualisointi (pisteet ja viivat)
-            for connection in HAND_CONNECTIONS:
-                p1, p2 = landmarks[connection[0]], landmarks[connection[1]]
-                cv2.line(frame, (int(p1.x*w), int(p1.y*h)), (int(p2.x*w), int(p2.y*h)), (200, 200, 200), 1)
-            for lm in landmarks:
-                cv2.circle(frame, (int(lm.x*w), int(lm.y*h)), 3, (0, 255, 0), -1)
-
             wrist = landmarks[0]
             index_tip = (landmarks[8].x, landmarks[8].y)
             index_extended = is_finger_extended(landmarks, 8)
             pinky_extended = is_finger_extended(landmarks, 20)
 
-            # Nappitunnistus (Collision)
             on_any_button = False
             for btn, action in [(btn_del, "del"), (btn_space, "space")]:
                 x1, y1, x2, y2 = btn["rect"]
                 if x1 < index_tip[0] < x2 and y1 < index_tip[1] < y2:
                     on_any_button = True
+                    if is_drawing_mode:
+                        is_drawing_mode = False; motion_buffer.clear()
+                        debug_msg = ""
+                    
                     if btn["start_time"] is None: btn["start_time"] = current_time
                     elif current_time - btn["start_time"] > 0.1:
                         captured_text = captured_text[:-1] if action == "del" else captured_text + " "
-                        btn["start_time"] = current_time + 1000 # Estä toisto
+                        btn["start_time"] = current_time + 1000 
                         success_cooldown_until = current_time + 1.2
-                else:
-                    btn["start_time"] = None
+                else: btn["start_time"] = None
 
-            # Ennustus
             lm_list = []
             for lm in landmarks: lm_list.extend([lm.x - wrist.x, lm.y - wrist.y, lm.z - wrist.z])
             input_tensor = torch.FloatTensor(lm_list).to(device).unsqueeze(0)
@@ -127,37 +121,41 @@ while cap.isOpened():
                 confidence = conf.item()
 
             if is_drawing_mode:
-                active_point = index_tip if drawing_type == "Z" else (landmarks[20].x, landmarks[20].y)
-                motion_buffer.append(active_point)
-                prediction_buffer.append(label)
-                
-                if len(motion_buffer) > 1:
-                    dist = math.sqrt((active_point[0]-motion_buffer[-2][0])**2 + (active_point[1]-motion_buffer[-2][1])**2)
-                    if dist > 0.005: last_movement_time = current_time
+                if (label not in IGNORE_RESET_LABELS) and confidence > 0.90:
+                    if cancel_label != label:
+                        cancel_label = label; cancel_start_time = current_time
+                    elif current_time - cancel_start_time > 0.2:
+                        is_drawing_mode = False; motion_buffer.clear()
+                        debug_msg = f"PERUTTU ({label})"
+                else:
+                    cancel_label = ""; cancel_start_time = 0
+                    active_point = index_tip if drawing_type == "Z" else (landmarks[20].x, landmarks[20].y)
+                    motion_buffer.append(active_point)
+                    prediction_buffer.append(label)
+                    
+                    if len(motion_buffer) > 1:
+                        dist = math.sqrt((active_point[0]-motion_buffer[-2][0])**2 + (active_point[1]-motion_buffer[-2][1])**2)
+                        if dist > 0.005: last_movement_time = current_time
 
-                if (current_time - last_movement_time) > 0.7 or len(motion_buffer) == motion_buffer.maxlen:
-                    if drawing_type == "Z" and len(motion_buffer) > 15:
-                        xs = [p[0] for p in motion_buffer]
-                        total_w = max(xs) - min(xs)
-                        max_x_idx = xs.index(max(xs))
-                        # Z-logiikka: Onko käyty oikealla ja palattu vasemmalle?
-                        if total_w > 0.04 and max_x_idx < len(xs) * 0.7:
-                            min_after_max = min(xs[max_x_idx:])
-                            if (max(xs) - min_after_max) > 0.03:
-                                captured_text += "z"
-                                debug_msg = "Z OK!"
-                            else: debug_msg = "Z VIRHE: Piirrä viisto viiva vasemmalle"
-                        else: debug_msg = "Z VIRHE: Liian suora liike"
-                    
-                    elif drawing_type == "I/J":
-                        max_dist = max([math.sqrt((p[0]-motion_buffer[0][0])**2 + (p[1]-motion_buffer[0][1])**2) for p in motion_buffer])
-                        if max_dist > 0.08 and "J" in prediction_buffer: captured_text += "j"
-                        elif max_dist < 0.04 and label == "I": captured_text += "i"
-                    
-                    is_drawing_mode = False
-                    success_cooldown_until = current_time + 1.2
-                    motion_buffer.clear()
-                    prediction_buffer.clear()
+                    if (current_time - last_movement_time) > 0.7 or len(motion_buffer) == motion_buffer.maxlen:
+                        if drawing_type == "Z" and len(motion_buffer) > 15:
+                            xs = [p[0] for p in motion_buffer]
+                            max_x_idx = xs.index(max(xs))
+                            if (max(xs) - min(xs)) > 0.04 and max_x_idx < len(xs) * 0.7:
+                                if (max(xs) - min(xs[max_x_idx:])) > 0.03:
+                                    captured_text += "z"
+                                    debug_msg = "" # Poistettu Z OK!
+                                else: debug_msg = "VIRHE: Viisto puuttuu"
+                            else: debug_msg = "VIRHE: Liian suora"
+                        
+                        elif drawing_type == "I/J":
+                            max_dist = max([math.sqrt((p[0]-motion_buffer[0][0])**2 + (p[1]-motion_buffer[0][1])**2) for p in motion_buffer])
+                            if max_dist > 0.08 and "J" in prediction_buffer: captured_text += "j"
+                            elif max_dist < 0.04 and label == "I": captured_text += "i"
+                            debug_msg = ""
+                        
+                        is_drawing_mode = False; success_cooldown_until = current_time + 1.2
+                        motion_buffer.clear()
 
                 for i in range(1, len(motion_buffer)):
                     cv2.line(frame, (int(motion_buffer[i-1][0]*w), int(motion_buffer[i-1][1]*h)),
@@ -165,18 +163,17 @@ while cap.isOpened():
 
             elif current_time > success_cooldown_until:
                 if label == 'Z' and confidence > 0.80 and index_extended and not on_any_button:
-                    is_drawing_mode, drawing_type = True, "Z"
-                    last_movement_time = current_time
-                    motion_buffer.clear()
+                    is_drawing_mode, drawing_type, last_movement_time = True, "Z", current_time
+                    motion_buffer.clear(); debug_msg = "Z..." # Lyhyempi info
                 elif label == 'I' and confidence > 0.80 and pinky_extended and not index_extended and not on_any_button:
-                    is_drawing_mode, drawing_type = True, "I/J"
-                    last_movement_time = current_time
-                    motion_buffer.clear()
+                    is_drawing_mode, drawing_type, last_movement_time = True, "I/J", current_time
+                    motion_buffer.clear(); debug_msg = "I/J..."
                 elif label not in ["nothing", "del", "space", "I", "J", "Z"] and confidence > 0.85 and not on_any_button:
                     if label == last_stable_label:
                         if (current_time - label_stable_start_time) > STABLE_THRESHOLD:
                             captured_text += label
                             last_stable_label = ""; success_cooldown_until = current_time + 1.2
+                            debug_msg = ""
                     else:
                         last_stable_label = label; label_stable_start_time = current_time
 
@@ -184,11 +181,9 @@ while cap.isOpened():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.putText(frame, debug_msg, (w//2 - 100, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-    # Tekstilaatikko
     cv2.rectangle(frame, (0, h-60), (w, h), (0, 0, 0), -1)
     cv2.putText(frame, f"TEXT: {captured_text}", (20, h-20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-
-    cv2.imshow("ASL Analyzer Full UI", frame)
+    cv2.imshow("ASL Analyzer", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'): break
 
 cap.release()
