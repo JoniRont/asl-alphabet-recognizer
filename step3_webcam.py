@@ -1,3 +1,4 @@
+# AI was used to assist in writing this code.
 import cv2
 import torch
 import torch.nn as nn
@@ -144,7 +145,7 @@ while cap.isOpened():
                         cancel_label = label; cancel_start_time = current_time
                     elif current_time - cancel_start_time > 0.2:
                         is_drawing_mode = False; motion_buffer.clear()
-                        debug_msg = f"PERUTTU ({label})"
+                        debug_msg = f"Cancelled ({label})"
                 else:
                     cancel_label = ""; cancel_start_time = 0
                     active_point = index_tip if drawing_type == "Z" else (landmarks[20].x, landmarks[20].y)
@@ -166,8 +167,8 @@ while cap.isOpened():
                                 if (max(xs) - min(xs[max_x_idx:])) > 0.03:
                                     captured_text += "z"
                                     debug_msg = "" 
-                                else: debug_msg = "VIRHE: Viisto puuttuu"
-                            else: debug_msg = "VIRHE: Liian suora"
+                                else: debug_msg = "ERROR: Diagonal stroke missing"
+                            else: debug_msg = "ERROR: Too straight"
                         
                         elif drawing_type == "I/J":
                             # Distinguish between static 'i' and dynamic 'j' based on movement distance
